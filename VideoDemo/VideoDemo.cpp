@@ -39,19 +39,26 @@ static unsigned char mybufback[IMAGE_WIDTH * IMAGE_HIGHT * 3 + 100];
 static BITMAPFILEHEADER* pbmfh;
 static BITMAPINFO* pbmi;
 static BYTE* pbits;
-static int              cxDib, cyDib;
+static int cxDib, cyDib;
 // 融合图像
 static COLOR det_image[IMAGE_HIGHT][IMAGE_WIDTH];//要显示的目标图像
 static COLOR det_image2[IMAGE_HIGHT][IMAGE_WIDTH];//要显示的目标图像(视频拼接)
 static int n = 0;
+// 水波纹
+static int buffer_1[IMAGE_HIGHT][IMAGE_WIDTH], buffer_2[IMAGE_HIGHT][IMAGE_WIDTH];//添加代码，用于计算波能
+static int tmp[IMAGE_HIGHT][IMAGE_WIDTH]; // 添加代码，用于交换波能矩阵
 // 任务编号
 int task = 1;
+
 
 // 此代码模块中包含的函数的前向声明:
 ATOM                MyRegisterClass(HINSTANCE hInstance);
 BOOL                InitInstance(HINSTANCE, int);
 LRESULT CALLBACK    WndProc(HWND, UINT, WPARAM, LPARAM);
 BOOL OpenFile(char** strPath);
+void NextFrameWaveEnerge();
+void RenderRipple();
+void disturb();
 
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
                      _In_opt_ HINSTANCE hPrevInstance,
@@ -62,6 +69,14 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     UNREFERENCED_PARAMETER(lpCmdLine);
 
     // TODO: 在此处放置代码。
+    //波能初始化
+    for (int y = 0; y < IMAGE_HIGHT; y++) {
+        for (int x = 0; x < IMAGE_WIDTH; x++)
+        {
+            buffer_1[y][x] = 0;
+            buffer_2[y][x] = 0;
+        }
+    }
 
     // 初始化全局字符串
     LoadStringW(hInstance, IDS_APP_TITLE, szTitle, MAX_LOADSTRING);
@@ -162,6 +177,7 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 //
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
+    int xy = 2 * n;
     HDC hdc;
     switch (message)
     {
@@ -218,6 +234,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             task = 3;
             SetTimer(hWnd, ID_TIMER, 50, NULL);
             break;
+        case ID_TASK_4:
+            n = 0;
+            task = 4;
+            SetTimer(hWnd, ID_TIMER, 50, NULL);
+            break;
         default:
             return DefWindowProc(hWnd, message, wParam, lParam);
         }
@@ -265,6 +286,12 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                         det_image[288 - i - 1][j].r = r;
                         det_image[288 - i - 1][j].g = g;
                         det_image[288 - i - 1][j].b = b;
+                    }
+                    else if (j< xy)
+                    {
+                        det_image[288 - i - 1][j].r = 100;
+                        det_image[288 - i - 1][j].g = 150;
+                        det_image[288 - i - 1][j].b = 200;
                     }
                     else//否则，就传送字幕图标图像的当前像素值到目标图像
                     {
@@ -444,6 +471,60 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             pBity2 = mybuf2;
             ReleaseDC(hWnd, hdc);
             break;
+        case 4:
+            hdc = GetDC(hWnd);
+            n = n + 1;
+            if (n > 299) n = 0;
+            pBity = pBity + (352 * 288 + 2 * (176 * 144)) * n;
+            pBitu = pBity + 352 * 288;
+            pBitv = pBitu + 176 * 144;
+            //read a new frame of the yuv file
+            for (int i = 0; i < 144; i++)
+                for (int j = 0; j < 176; j++)
+                {
+                    u[i][j] = *(pBitu + j + 176 * (i));
+                    v[i][j] = *(pBitv + j + 176 * (i));
+                }
+            //read y，and translate yuv int rgb and display the pixel
+            for (int i = 0; i < 288; i++)
+                for (int j = 0; j < 352; j++)
+                {
+                    //read y
+                    y[i][j] = *(pBity + j + (i) * 352);
+                    //translate
+                    int r = (298 * (y[i][j] - 16) + 409 * (v[i / 2][j / 2] - 128) + 128) >> 8;
+                    if (r < 0) r = 0;
+                    if (r > 255) r = 255;
+                    int g = (298 * (y[i][j] - 16) - 100 * (u[i / 2][j / 2] - 128) - 208 * (v[i / 2][j / 2] - 128) + 128) >> 8;
+                    if (g < 0) g = 0;
+                    if (g > 255) g = 255;
+                    int b = (298 * (y[i][j] - 16) + 516 * (u[i / 2][j / 2] - 128) + 128) >> 8;
+                    if (b < 0) b = 0;
+                    if (b > 255) b = 255;
+
+                    det_image[288 - i - 1][j].r = r;
+                    det_image[288 - i - 1][j].g = g;
+                    det_image[288 - i - 1][j].b = b;
+                }
+            disturb();//投石入水
+            NextFrameWaveEnerge(); //计算波能传递与衰减
+            RenderRipple();//渲染目标图像
+            SetDIBitsToDevice(hdc,
+                30,
+                20,
+                352,
+                288,
+                0,
+                0,
+                0,
+                288,
+                det_image,
+                pbmi,
+                DIB_RGB_COLORS);
+            pBity = mybuf; // let pBity to point at the first place of the file
+            ReleaseDC(hWnd, hdc);
+
+            break;
         }
 
     case WM_PAINT:
@@ -489,3 +570,71 @@ BOOL OpenFile(char** strPath)
         return false;
     }
 }
+
+
+void disturb()
+{
+    int x, y, stonesize, stoneweight;
+    x = rand();
+    y = 200;
+    // TODO: 修改参数
+    stonesize = 20;
+    stoneweight = 200;
+    // 突破边界不处理
+    if ((x >= cxDib - stonesize) ||
+        (x < stonesize) ||
+        (y >= cyDib - stonesize) ||
+        (y < stonesize))
+        return;
+    for (int posy = y - stonesize; posy < y + stonesize; posy++)
+        for (int posx = x - stonesize; posx < x + stonesize; posx++)
+        {
+            if ((posx - x) * (posx - x) + (posy - y) * (posy - y) < stonesize * stonesize)
+            {
+                buffer_1[posy][posx] += stoneweight;
+            }
+        }
+}
+
+void NextFrameWaveEnerge()
+{
+    for (int y = 1; y < cyDib - 1; y++)
+        for (int x = 1; x < cxDib - 1; x++)
+        {
+            // 公式：7-6
+            buffer_2[y][x] = ((buffer_1[y][x - 1] + buffer_1[y][x + 1] + buffer_1[y - 1][x] + buffer_1[y + 1][x]) >> 1) - buffer_2[y][x];
+            // 波能衰减，衰减因子为1/32
+            buffer_2[y][x] -= buffer_2[y][x] >> 5;
+        }
+    //exchange the buffer_1 and buffer_2
+    for (int y = 1; y < cyDib; y++)
+        for (int x = 1; x < cxDib; x++)
+            tmp[y][x] = buffer_1[y][x];
+    for (int y = 1; y < cyDib; y++)
+        for (int x = 1; x < cxDib; x++)
+            buffer_1[y][x] = buffer_2[y][x];
+    for (int y = 1; y < cyDib; y++)
+        for (int x = 1; x < cxDib; x++)
+            buffer_2[y][x] = tmp[y][x];
+}
+
+void RenderRipple()
+{
+    for (int y = 0; y < cyDib - 1; y++)
+        for (int x = 0; x < cxDib - 1; x++)
+        {
+            // 计算偏移
+            int xoff = buffer_2[y][x - 1] - buffer_2[y][x + 1];
+            int yoff = buffer_2[y - 1][x] - buffer_2[y + 1][x];
+            // 边界处理
+            if (xoff >= cxDib) xoff = cxDib - 1;
+            if (xoff < 0) xoff = 0;
+            if (yoff >= cyDib) yoff = cyDib - 1;
+            if (yoff < 0) yoff = 0;
+            // TODO: 处理图像偏移,和实验二不一样
+            det_image[y][x].b = det_image[y + yoff][x + xoff].b;
+            det_image[y][x].g = det_image[y + yoff][x + xoff].g;
+            det_image[y][x].r = det_image[y + yoff][x + xoff].r;
+        }
+}
+

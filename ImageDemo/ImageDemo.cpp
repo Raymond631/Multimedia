@@ -222,7 +222,7 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
    UpdateWindow(hWnd);
 
    // TODO: 设置定时器
-   SetTimer(hWnd, ID_TIMER, 33, NULL); // 33ms刷新一次，相当于30帧
+   SetTimer(hWnd, ID_TIMER, 20, NULL); // 33ms刷新一次，相当于30帧
 
    return TRUE;
 }
@@ -266,6 +266,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             pbmi,
             DIB_RGB_COLORS);
         ReleaseDC(hWnd, hdc);
+        break;
     case WM_PAINT:
         {
             PAINTSTRUCT ps;
@@ -364,10 +365,10 @@ void disturb()
 {
     int x, y, stonesize, stoneweight;
     x = rand();
-    y = 200;
+    y = 100;
     // TODO: 修改参数
     stonesize = 20;
-    stoneweight = 200;
+    stoneweight = 50;
     // 突破边界不处理
     if ((x >= cxDib - stonesize) ||
         (x < stonesize) ||
